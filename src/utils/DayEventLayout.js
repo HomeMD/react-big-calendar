@@ -1,6 +1,8 @@
 import sortBy from 'lodash/sortBy'
 import { accessor as get } from './accessors'
 
+const MIN_DIST = 5
+
 class Event {
   constructor(data, { startAccessor, endAccessor, slotMetrics }) {
     const {
@@ -93,7 +95,7 @@ class Event {
 function onSameRow(a, b) {
   return (
     // Occupies the same start slot.
-    Math.abs(b.start - a.start) <= 30 ||
+    Math.abs(b.start - a.start) <= MIN_DIST ||
     // A's start slot overlaps with b's end slot.
     (a.start > b.start && a.start < b.end)
   )
@@ -144,7 +146,7 @@ function getStyledEvents({ events, ...props }) {
 
     // Check if this event can go into a container event.
     const container = containerEvents.find(
-      c => c.end > event.start || Math.abs(event.start - c.start) < 30
+      c => c.end > event.start || Math.abs(event.start - c.start) < MIN_DIST
     )
 
     // Couldn't find a container — that means this event is a container.
