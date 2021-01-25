@@ -65,10 +65,9 @@ class Event {
  */
 function onSameRow(a, b) {
   return (
-    (a.start > b.start && a.start < b.end) ||
+    (a.start >= b.start && a.start <= b.end) ||
     (a.end > b.start && a.end < b.end) ||
-    (b.end > a.start && b.end < a.end) ||
-    (b.end > a.start && b.end < a.end)
+    (b.end >= a.start && b.end <= a.end)
   )
 }
 
