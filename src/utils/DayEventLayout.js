@@ -20,135 +20,70 @@ class Event {
     this.height = height
     this.data = data
   }
-
-  /**
-   * The event's width without any overlap.
-   */
-  get _width() {
-    // The container event's width is determined by the maximum number of
-    // events in any of its rows.
-    if (this.rows) {
-      return calcWidth(this.rows)
-    } else if (this.row) {
-      return calcWidth([this.row])
-    } else if (this.leaves) {
-      return calcWidth([this])
-    } else {
-      return 100
-    }
-  }
-
-  /**
-   * The event's calculated width, possibly with extra width added for
-   * overlapping effect.
-   */
-  get width() {
-    return this._width
-  }
-
-  get xOffset() {
-    // Containers have no offset.
-    if (this.rows) return 0
-
-    // Rows always start where their container ends.
-    if (this.leaves) return this.container._width
-
-    // Leaves are spread out evenly on the space left by its row.
-    const { leaves, xOffset, _width } = this.row
-    const index = leaves.indexOf(this) + 1
-    return xOffset + index * _width
-  }
 }
 
 /**
- * Return true if event a and b is considered to be on the same row.
+ * Return true if event a and b overlap in time. Events that only touch
+ * (one ends exactly when the other starts) don't overlap.
  */
-function onSameRow(a, b) {
-  return (
-    (a.start >= b.start && a.start <= b.end) ||
-    (a.end > b.start && a.end < b.end) ||
-    (b.end >= a.start && b.end <= a.end)
-  )
+function overlaps(a, b) {
+  return a.start < b.end && b.start < a.end
 }
 
-function sortByRender(events) {
-  const sortedByTime = sortBy(events, ['startMs', e => -e.endMs])
+/**
+ * Lay out a cluster of transitively overlapping events side by side: each
+ * event takes the first column that is free when it starts, and then
+ * stretches right over any columns that stay free for its whole duration.
+ */
+function layoutCluster(cluster) {
+  const columnEnds = []
+  cluster.forEach(event => {
+    let column = columnEnds.findIndex(end => end <= event.start)
+    if (column === -1) column = columnEnds.length
+    columnEnds[column] = event.end
+    event.column = column
+  })
 
-  const sorted = []
-  while (sortedByTime.length > 0) {
-    const event = sortedByTime.shift()
-    sorted.push(event)
-
-    for (let i = 0; i < sortedByTime.length; i++) {
-      const test = sortedByTime[i]
-
-      // Still inside this event, look for next.
-      if (event.endMs > test.startMs) continue
-
-      // We've found the first event of the next event group.
-      // If that event is not right next to our current event, we have to
-      // move it here.
-      if (i > 0) {
-        const event = sortedByTime.splice(i, 1)[0]
-        sorted.push(event)
-      }
-
-      // We've already found the next event group, so stop looking.
-      break
+  const columnWidth = 100 / columnEnds.length
+  cluster.forEach(event => {
+    let span = 1
+    while (
+      event.column + span < columnEnds.length &&
+      !cluster.some(
+        other => other.column === event.column + span && overlaps(other, event)
+      )
+    ) {
+      span++
     }
-  }
-
-  return sorted
+    event.xOffset = event.column * columnWidth
+    event.width = span * columnWidth
+  })
 }
 
 function getStyledEvents({ events, ...props }) {
-  // Create proxy events and order them so that we don't have
-  // to fiddle with z-indexes.
-  const proxies = events.map(event => new Event(event, props))
-  const eventsInRenderOrder = sortByRender(proxies)
+  const proxies = sortBy(events.map(event => new Event(event, props)), [
+    'start',
+    e => -e.end,
+  ])
 
-  // Group overlapping events, while keeping order.
-  // Every event is always one of: container, row or leaf.
-  // Containers can contain rows, and rows can contain leaves.
-  const containerEvents = []
-  for (let i = 0; i < eventsInRenderOrder.length; i++) {
-    const event = eventsInRenderOrder[i]
-
-    // Check if this event can go into a container event.
-    const container = containerEvents.find(c => onSameRow(c, event))
-
-    // Couldn't find a container — that means this event is a container.
-    if (!container) {
-      event.rows = []
-      containerEvents.push(event)
-      continue
+  // Split the events into clusters, where every event overlaps at least one
+  // other event of its cluster. Comparing against the furthest end seen so
+  // far (not just the first event's) keeps chains like 9:30-9:50, 9:45-10:15,
+  // 9:50-10:20 in one cluster, so the last one can't cover the middle one.
+  let cluster = []
+  let clusterEnd = -Infinity
+  proxies.forEach(event => {
+    if (event.start >= clusterEnd) {
+      layoutCluster(cluster)
+      cluster = []
     }
-
-    // Found a container for the event.
-    event.container = container
-
-    // Check if the event can be placed in an existing row.
-    // Start looking from behind.
-    let row = null
-    for (let j = container.rows.length - 1; !row && j >= 0; j--) {
-      if (onSameRow(container.rows[j], event)) {
-        row = container.rows[j]
-      }
-    }
-
-    if (row) {
-      // Found a row, so add it.
-      row.leaves.push(event)
-      event.row = row
-    } else {
-      // Couldn't find a row – that means this event is a row.
-      event.leaves = []
-      container.rows.push(event)
-    }
-  }
+    cluster.push(event)
+    clusterEnd = Math.max(clusterEnd, event.end)
+  })
+  layoutCluster(cluster)
 
   // Return the original events, along with their styles.
-  return eventsInRenderOrder.map(event => ({
+  return proxies.map(event => ({
     event: event.data,
     style: {
       top: event.top,
@@ -157,18 +92,6 @@ function getStyledEvents({ events, ...props }) {
       xOffset: event.xOffset,
     },
   }))
-}
-
-function calcWidth(rows = []) {
-  var columns =
-    rows.reduce(
-      function(max, row) {
-        return Math.max(max, row.leaves.length + 1)
-      }, // add itself
-      0
-    ) + 1 // add the container
-
-  return 100 / columns
 }
 
 export { getStyledEvents }
